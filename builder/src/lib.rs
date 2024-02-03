@@ -16,9 +16,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let builder_name = builder_struct.ident.clone();
     let accessor = accessor(builder_name.clone(), field_name_type);
 
-    // let builder_struct_def = builder_struct(&builder_name, &data);
-
-    //
+    let builer_fn = build_fn(builder_name.clone(), name.clone(), field_names(&input));
 
     let expand = quote! {
         impl #name {
@@ -29,22 +27,16 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
         #builder_struct
 
-        use std::error::Error;
-        // アクセサの名前にしつつ
-        //
-        impl #builder_name {
-            pub fn build() -> Result<#name, Box<dyn Error>> {
-                todo!()
-            }
-        }
 
         #accessor
+
+        #builer_fn
     };
 
     proc_macro::TokenStream::from(expand)
 }
 
-fn accessor(struct_name: Ident, original_field_name_type: Vec<(Ident, Type)>) -> TokenStream {
+fn accessor(builder_name: Ident, original_field_name_type: Vec<(Ident, Type)>) -> TokenStream {
     let tokens = original_field_name_type
         .into_iter()
         .map(|(ident, ty)| {
@@ -57,8 +49,38 @@ fn accessor(struct_name: Ident, original_field_name_type: Vec<(Ident, Type)>) ->
         .collect::<Vec<_>>();
 
     quote! {
-        impl #struct_name {
+        impl #builder_name {
             #(#tokens)*
+        }
+    }
+}
+
+fn build_fn(
+    builder_name: Ident,
+    target_struct_name: Ident,
+    field_names: Vec<Ident>,
+) -> TokenStream {
+    let tokens = field_names
+        .iter()
+        .map(|field_name| {
+            quote! {
+                let #field_name = self.#field_name.map_or_else(|| {
+                    Err(format!("{} is empty", stringify!(#field_name)))
+                }, Ok)?;
+            }
+        })
+        .collect::<Vec<_>>();
+
+    quote! {
+        impl #builder_name {
+            fn build(self) -> Result<#target_struct_name, Box<dyn std::error::Error>> {
+                #(#tokens)*
+
+                Ok(#target_struct_name {
+                    #(#field_names),*
+                })
+
+            }
         }
     }
 }
@@ -70,6 +92,22 @@ fn field_name_type_set(input: &DeriveInput) -> Vec<(Ident, Type)> {
                 .named
                 .iter()
                 .map(|ddd| (ddd.ident.clone().unwrap(), ddd.ty.clone()))
+                .collect::<Vec<_>>(),
+            syn::Fields::Unnamed(_) => panic!("field name is necessary"),
+            syn::Fields::Unit => panic!("field name is necessary"),
+        },
+        Data::Enum(_) => panic!("Should be struct"),
+        Data::Union(_) => panic!("Should be struct"),
+    }
+}
+
+fn field_names(input: &DeriveInput) -> Vec<Ident> {
+    match &input.data {
+        Data::Struct(data_struct) => match &data_struct.fields {
+            syn::Fields::Named(field_named) => field_named
+                .named
+                .iter()
+                .map(|ddd| ddd.ident.clone().unwrap())
                 .collect::<Vec<_>>(),
             syn::Fields::Unnamed(_) => panic!("field name is necessary"),
             syn::Fields::Unit => panic!("field name is necessary"),
