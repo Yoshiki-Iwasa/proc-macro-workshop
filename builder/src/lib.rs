@@ -41,8 +41,9 @@ fn accessor(builder_name: Ident, original_field_name_type: Vec<(Ident, Type)>) -
         .into_iter()
         .map(|(ident, ty)| {
             quote! {
-                pub fn #ident(&mut self, #ident: #ty) {
-                    self.#ident = Some(#ident)
+                pub fn #ident(&mut self, #ident: #ty) -> &mut Self {
+                    self.#ident = Some(#ident);
+                    self
                 }
             }
         })
@@ -64,7 +65,7 @@ fn build_fn(
         .iter()
         .map(|field_name| {
             quote! {
-                let #field_name = self.#field_name.map_or_else(|| {
+                let #field_name = self.#field_name.clone().map_or_else(|| {
                     Err(format!("{} is empty", stringify!(#field_name)))
                 }, Ok)?;
             }
@@ -73,7 +74,7 @@ fn build_fn(
 
     quote! {
         impl #builder_name {
-            fn build(self) -> Result<#target_struct_name, Box<dyn std::error::Error>> {
+            fn build(&mut self) -> Result<#target_struct_name, Box<dyn std::error::Error>> {
                 #(#tokens)*
 
                 Ok(#target_struct_name {
@@ -140,7 +141,7 @@ fn builder_struct(mut input: DeriveInput) -> DeriveInput {
     };
 
     let derive_attribute: Attribute = parse_quote! {
-        #[derive(Default, Debug)]
+        #[derive(Default, Debug, Clone)]
     };
 
     input.attrs = vec![derive_attribute];

@@ -11,6 +11,12 @@ pub struct Command {
     current_dir: String,
 }
 
+impl Command {
+    fn ddd(self) -> Self {
+        self
+    }
+}
+
 fn main() {
     let command = Command::builder()
         .executable("cargo".to_owned())

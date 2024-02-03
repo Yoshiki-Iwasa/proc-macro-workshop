@@ -54,7 +54,5 @@ pub struct Command {
 
 fn main() {
     let builder = Command::builder();
-    dbg!(builder);
-
     let _ = builder;
 }
