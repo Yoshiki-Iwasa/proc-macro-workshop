@@ -42,6 +42,8 @@
 //   - Joining together the type name + "Builder" to make the builder's name:
 //     https://docs.rs/syn/2.0/syn/struct.Ident.html
 
+// use derive_builder::Builder;
+
 use derive_builder::Builder;
 
 #[derive(Builder)]
@@ -52,9 +54,16 @@ pub struct Command {
     current_dir: String,
 }
 
-fn main() {
-    let builder = Command::builder();
-    dbg!(builder);
+#[cfg(test)]
+mod n_2 {
+    use super::Command;
 
-    let _ = builder;
+    #[test]
+    fn ddd() {
+        let builder = Command::builder();
+        dbg!(builder);
+
+        let _ = builder;
+    }
 }
+//
