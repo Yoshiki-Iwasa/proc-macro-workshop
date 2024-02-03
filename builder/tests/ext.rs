@@ -44,26 +44,28 @@
 
 // use derive_builder::Builder;
 
+// use derive_builder::Builder;
+
 use derive_builder::Builder;
 
-#[derive(Builder)]
-pub struct Command {
-    executable: String,
-    args: Vec<String>,
-    env: Vec<String>,
-    current_dir: String,
-}
+// #[derive(Builder)]
+// pub struct Command {
+//     executable: String,
+//     args: Vec<String>,
+//     env: Vec<String>,
+//     current_dir: String,
+// }
 
-#[cfg(test)]
-mod n_2 {
-    use super::Command;
+// #[cfg(test)]
+// mod n_2 {
+//     use super::Command;
 
-    #[test]
-    fn ddd() {
-        let builder = Command::builder();
-        dbg!(builder);
+//     #[test]
+//     fn ddd() {
+//         let builder = Command::builder();
+//         dbg!(builder);
 
-        let _ = builder;
-    }
-}
-//
+//         let _ = builder;
+//     }
+// }
+// //

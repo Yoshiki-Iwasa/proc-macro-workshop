@@ -1,23 +1,26 @@
 use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
-use syn::{parse_macro_input, parse_quote, token::Pub, Attribute, Data, DeriveInput, Visibility};
+use syn::{
+    parse_macro_input, parse_quote, token::Pub, Attribute, Data, DeriveInput, Type, Visibility,
+};
 
 #[proc_macro_derive(Builder)]
 pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
+    let name = input.ident.clone();
 
     let builder_struct = builder_struct(input.clone());
 
-    let name = input.ident;
+    let field_name_type = field_name_type_set(&input);
 
-    let builder_name = Ident::new(&format!("{}Builder", name.clone()), Span::call_site());
+    let builder_name = builder_struct.ident.clone();
+    let accessor = accessor(builder_name.clone(), field_name_type);
 
     // let builder_struct_def = builder_struct(&builder_name, &data);
 
     //
 
     let expand = quote! {
-
         impl #name {
             pub fn builder() -> #builder_name {
                 #builder_name::default()
@@ -25,12 +28,58 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         }
 
         #builder_struct
+
+        use std::error::Error;
+        // アクセサの名前にしつつ
+        //
+        impl #builder_name {
+            pub fn build() -> Result<#name, Box<dyn Error>> {
+                todo!()
+            }
+        }
+
+        #accessor
     };
 
     proc_macro::TokenStream::from(expand)
 }
 
-fn builder_struct(mut input: DeriveInput) -> TokenStream {
+fn accessor(struct_name: Ident, original_field_name_type: Vec<(Ident, Type)>) -> TokenStream {
+    let tokens = original_field_name_type
+        .into_iter()
+        .map(|(ident, ty)| {
+            quote! {
+                pub fn #ident(&mut self, #ident: #ty) {
+                    self.#ident = Some(#ident)
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    quote! {
+        impl #struct_name {
+            #(#tokens)*
+        }
+    }
+}
+
+fn field_name_type_set(input: &DeriveInput) -> Vec<(Ident, Type)> {
+    match &input.data {
+        Data::Struct(data_struct) => match &data_struct.fields {
+            syn::Fields::Named(field_named) => field_named
+                .named
+                .iter()
+                .map(|ddd| (ddd.ident.clone().unwrap(), ddd.ty.clone()))
+                .collect::<Vec<_>>(),
+            syn::Fields::Unnamed(_) => panic!("field name is necessary"),
+            syn::Fields::Unit => panic!("field name is necessary"),
+        },
+        Data::Enum(_) => panic!("Should be struct"),
+        Data::Union(_) => panic!("Should be struct"),
+    }
+}
+
+fn builder_struct(mut input: DeriveInput) -> DeriveInput {
     let name = input.ident.clone();
     let builder_name = Ident::new(&format!("{}Builder", name.clone()), Span::call_site());
 
@@ -58,7 +107,5 @@ fn builder_struct(mut input: DeriveInput) -> TokenStream {
 
     input.attrs = vec![derive_attribute];
 
-    quote! {
-        #input
-    }
+    input
 }
