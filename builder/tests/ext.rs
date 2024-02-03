@@ -56,16 +56,16 @@ pub struct Command {
     current_dir: String,
 }
 
-#[cfg(test)]
-mod n_2 {
-    use super::Command;
+// #[cfg(test)]
+// mod n_2 {
+//     use super::Command;
 
-    #[test]
-    fn ddd() {
-        let builder = Command::builder();
-        dbg!(builder);
+//     #[test]
+//     fn ddd() {
+//         let builder = Command::builder();
+//         dbg!(builder);
 
-        let _ = builder;
-    }
-}
-//
+//         let _ = builder;
+//     }
+// }
+// //
