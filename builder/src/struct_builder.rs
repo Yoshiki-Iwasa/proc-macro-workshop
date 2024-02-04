@@ -1,6 +1,7 @@
 use proc_macro2::Ident;
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
+use syn::Result;
 use syn::{parse_quote, token::Pub, Attribute, Data, DeriveInput, Expr, Field, Lit, Visibility};
 
 use crate::{
@@ -20,19 +21,21 @@ impl BuilderFactory {
         self.base.ident = builder_name(original_input);
     }
 
-    fn convert_fields_into_builder(&mut self) {
+    fn convert_fields_into_builder(&mut self) -> Result<()> {
         let Data::Struct(data_struct) = &mut self.base.data else {
-            panic!("Should be Struct")
+            return Err(syn::Error::new(Span::call_site(), "Should be Struct"));
         };
         let syn::Fields::Named(fields_named) = &mut data_struct.fields else {
-            panic!("field name is necessary")
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "field name is necessary",
+            ));
         };
 
         fields_named.named.iter_mut().for_each(|field| {
             let original_type = field.ty.clone();
-            if !is_option(&original_type)
-                && !(is_vector(&original_type)
-                    && field.attrs.iter().any(Self::is_attribute_builder))
+            if !(is_option(&original_type)
+                || is_vector(&original_type) && field.attrs.iter().any(Self::is_attribute_builder))
             {
                 field.ty = parse_quote! {
                     Option<#original_type>
@@ -40,77 +43,102 @@ impl BuilderFactory {
             }
             field.vis = Visibility::Public(Pub::default());
             field.attrs = vec![]
-        })
+        });
+
+        Ok(())
     }
 
-    pub fn build(&mut self, original_input: &DeriveInput) -> TokenStream {
+    pub fn build(&mut self, original_input: &DeriveInput) -> syn::Result<TokenStream> {
         self.set_builder_name(original_input);
-        self.convert_fields_into_builder();
+        self.convert_fields_into_builder()?;
         self.set_derive_attributes();
 
-        let accessor = Self::accessor(original_input);
+        let accessor = Self::accessor(original_input)?;
         let build_fn = self.build_fn(original_input);
 
         // builderを作るときに
         let base = self.base.clone();
 
-        quote! {
+        Ok(quote! {
           #base
 
           #accessor
 
           #build_fn
-        }
+        })
     }
 
     // #[builder(each = "arg")]みたいな形式をdetectする
-    fn extract_arg_name(attr: &Attribute) -> Ident {
-        let builder: Expr = attr.parse_args().expect("#[builder(each = \"arg\")]");
+    fn extract_arg_name(attr: &Attribute) -> syn::Result<Ident> {
+        let builder: Expr = attr.parse_args().map_err(|_| {
+            syn::Error::new_spanned(attr.meta.clone(), r#"expected `builder(each = "...")`"#)
+        })?;
         let Expr::Assign(assign) = builder else {
-            panic!("#[builder(each = \"arg\")]")
+            return Err(syn::Error::new_spanned(
+                attr.meta.clone(),
+                r#"expected `builder(each = "...")`"#,
+            ));
         };
 
-        assert!(
-            assign.attrs.is_empty(),
-            "attribute on expression is not allowed"
-        );
+        if !assign.attrs.is_empty() {
+            return Err(syn::Error::new_spanned(
+                attr.meta.clone(),
+                r#"expected `builder(each = "...")`"#,
+            ));
+        }
 
         let Expr::Path(expr_path) = *assign.left else {
-            panic!("")
+            return Err(syn::Error::new_spanned(
+                attr.meta.clone(),
+                r#"expected `builder(each = "...")`"#,
+            ));
         };
-        assert!(
-            expr_path.attrs.is_empty() && expr_path.qself.is_none(),
-            "#[builder(each = \"arg\")]"
-        );
-        assert!(
-            expr_path
-                .path
-                .get_ident()
-                .is_some_and(|ident| ident == "each"),
-            "#[builder(each = \"arg\")]"
-        );
+
+        if !(expr_path.attrs.is_empty() && expr_path.qself.is_none()) {
+            return Err(syn::Error::new_spanned(
+                attr.meta.clone(),
+                r#"expected `builder(each = "...")`"#,
+            ));
+        }
+
+        if !expr_path
+            .path
+            .get_ident()
+            .is_some_and(|ident| ident == "each")
+        {
+            return Err(syn::Error::new_spanned(
+                attr.meta.clone(),
+                r#"expected `builder(each = "...")`"#,
+            ));
+        }
 
         let Expr::Lit(lit) = *assign.right else {
-            panic!("#[builder(each = \"arg\")]")
+            return Err(syn::Error::new_spanned(
+                attr.clone(),
+                r#"expected `builder(each = "...")`"#,
+            ));
         };
         let Lit::Str(lit_str) = lit.lit else {
-            panic!("#[builder(each = \"arg\")]")
+            return Err(syn::Error::new_spanned(
+                attr.clone(),
+                r#"expected `builder(each = "...")`"#,
+            ));
         };
-        Ident::new(lit_str.value().as_str(), Span::call_site())
+        Ok(Ident::new(lit_str.value().as_str(), Span::call_site()))
     }
 
     fn is_attribute_builder(attr: &Attribute) -> bool {
         attr.path().is_ident("builder")
     }
 
-    fn accessor(original_input: &DeriveInput) -> TokenStream {
+    fn accessor(original_input: &DeriveInput) -> syn::Result<TokenStream> {
         let fields = Self::extract_original_fields(original_input);
         let methods = fields
             .iter()
             .map(|field| {
                 let ident = &field.ident.clone().unwrap();
                 let ty = &field.ty;
-                if is_option(ty) {
+                let tokens = if is_option(ty) {
                     let wraped_type = extract_type_from_option(ty);
                     quote! {
                       pub fn #ident(&mut self, #ident: #wraped_type) -> &mut Self {
@@ -127,7 +155,7 @@ impl BuilderFactory {
                     if !is_vector(&field.ty) {
                         panic!("Vec<T> is expected")
                     }
-                    let arg_name = Self::extract_arg_name(&attr);
+                    let arg_name = Self::extract_arg_name(&attr)?;
                     let vec_inner_ty = extract_type_from_vector(&field.ty);
                     quote! {
                       pub fn #arg_name(&mut self, #arg_name: #vec_inner_ty) -> &mut Self {
@@ -142,15 +170,17 @@ impl BuilderFactory {
                           self
                       }
                     }
-                }
+                };
+
+                Ok(tokens)
             })
-            .collect::<Vec<_>>();
+            .collect::<syn::Result<Vec<_>>>()?;
         let builder_name = builder_name(original_input);
-        quote! {
+        Ok(quote! {
             impl #builder_name {
                 #(#methods)*
             }
-        }
+        })
     }
 
     fn set_derive_attributes(&mut self) {

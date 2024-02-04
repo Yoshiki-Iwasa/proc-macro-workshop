@@ -9,11 +9,16 @@ mod struct_builder;
 #[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
+    expand(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
 
+fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let mut builder_factory = BuilderFactory::new(input.clone());
     let original_method_factory = OriginalMethodsFactory::new(input.clone());
 
-    let builder_and_methods = builder_factory.build(&input);
+    let builder_and_methods = builder_factory.build(&input)?;
     let original_methods = original_method_factory.build();
 
     let expand = quote! {
@@ -23,8 +28,7 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
         #builder_and_methods
 
     };
-
-    proc_macro::TokenStream::from(expand)
+    Ok(expand)
 }
 
 // literally Option< > only
