@@ -38,7 +38,7 @@ impl BuilderFactory {
                 || is_vector(&original_type) && field.attrs.iter().any(Self::is_attribute_builder))
             {
                 field.ty = parse_quote! {
-                    Option<#original_type>
+                    std::option::Option<#original_type>
                 };
             }
             field.vis = Visibility::Public(Pub::default());
@@ -185,7 +185,7 @@ impl BuilderFactory {
 
     fn set_derive_attributes(&mut self) {
         let attr = parse_quote! {
-            #[derive(Default, Debug, Clone)]
+            #[derive(std::default::Default, std::fmt::Debug, std::clone::Clone)]
         };
         self.base.attrs = vec![attr]
     }
@@ -250,7 +250,7 @@ impl BuilderFactory {
         let original_name = original_input.ident.clone();
         quote! {
             impl #builder_name {
-                pub fn build(&mut self) -> Result<#original_name, Box<dyn std::error::Error>> {
+                pub fn build(&mut self) -> std::result::Result<#original_name, std::boxed::Box<dyn std::error::Error>> {
                         #(#field_checks)*
 
                     Ok(#original_name {
