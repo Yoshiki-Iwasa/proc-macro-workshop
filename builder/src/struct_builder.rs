@@ -1,8 +1,11 @@
-use proc_macro2::TokenStream;
+use proc_macro2::Ident;
+use proc_macro2::{Span, TokenStream};
 use quote::quote;
-use syn::{parse_quote, token::Pub, Data, DeriveInput, Field, Visibility};
+use syn::{parse_quote, token::Pub, Attribute, Data, DeriveInput, Expr, Field, Lit, Visibility};
 
-use crate::{builder_name, extract_type_from_option};
+use crate::{
+    builder_name, extract_type_from_option, extract_type_from_vector, is_option, is_vector,
+};
 
 pub struct BuilderFactory {
     base: DeriveInput,
@@ -27,12 +30,16 @@ impl BuilderFactory {
 
         fields_named.named.iter_mut().for_each(|field| {
             let original_type = field.ty.clone();
-            if extract_type_from_option(&original_type).is_none() {
+            if !is_option(&original_type)
+                && !(is_vector(&original_type)
+                    && field.attrs.iter().any(Self::is_attribute_builder))
+            {
                 field.ty = parse_quote! {
                     Option<#original_type>
                 };
             }
             field.vis = Visibility::Public(Pub::default());
+            field.attrs = vec![]
         })
     }
 
@@ -44,6 +51,7 @@ impl BuilderFactory {
         let accessor = Self::accessor(original_input);
         let build_fn = self.build_fn(original_input);
 
+        // builderを作るときに
         let base = self.base.clone();
 
         quote! {
@@ -55,6 +63,46 @@ impl BuilderFactory {
         }
     }
 
+    // #[builder(each = "arg")]みたいな形式をdetectする
+    fn extract_arg_name(attr: &Attribute) -> Ident {
+        let builder: Expr = attr.parse_args().expect("#[builder(each = \"arg\")]");
+        let Expr::Assign(assign) = builder else {
+            panic!("#[builder(each = \"arg\")]")
+        };
+
+        assert!(
+            assign.attrs.is_empty(),
+            "attribute on expression is not allowed"
+        );
+
+        let Expr::Path(expr_path) = *assign.left else {
+            panic!("")
+        };
+        assert!(
+            expr_path.attrs.is_empty() && expr_path.qself.is_none(),
+            "#[builder(each = \"arg\")]"
+        );
+        assert!(
+            expr_path
+                .path
+                .get_ident()
+                .is_some_and(|ident| ident == "each"),
+            "#[builder(each = \"arg\")]"
+        );
+
+        let Expr::Lit(lit) = *assign.right else {
+            panic!("#[builder(each = \"arg\")]")
+        };
+        let Lit::Str(lit_str) = lit.lit else {
+            panic!("#[builder(each = \"arg\")]")
+        };
+        Ident::new(lit_str.value().as_str(), Span::call_site())
+    }
+
+    fn is_attribute_builder(attr: &Attribute) -> bool {
+        attr.path().is_ident("builder")
+    }
+
     fn accessor(original_input: &DeriveInput) -> TokenStream {
         let fields = Self::extract_original_fields(original_input);
         let methods = fields
@@ -62,22 +110,37 @@ impl BuilderFactory {
             .map(|field| {
                 let ident = &field.ident.clone().unwrap();
                 let ty = &field.ty;
-                match extract_type_from_option(&field.ty) {
-                    Some(ori_type) => {
-                        quote! {
-                          pub fn #ident(&mut self, #ident: #ori_type) -> &mut Self {
-                              self.#ident = Some(#ident);
-                              self
-                          }
-                        }
+                if is_option(ty) {
+                    let wraped_type = extract_type_from_option(ty);
+                    quote! {
+                      pub fn #ident(&mut self, #ident: #wraped_type) -> &mut Self {
+                          self.#ident = Some(#ident);
+                          self
+                      }
                     }
-                    None => {
-                        quote! {
-                          pub fn #ident(&mut self, #ident: #ty) -> &mut Self {
-                              self.#ident = Some(#ident);
-                              self
-                          }
-                        }
+                } else if let Some(attr) = field
+                    .attrs
+                    .clone()
+                    .into_iter()
+                    .find(Self::is_attribute_builder)
+                {
+                    if !is_vector(&field.ty) {
+                        panic!("Vec<T> is expected")
+                    }
+                    let arg_name = Self::extract_arg_name(&attr);
+                    let vec_inner_ty = extract_type_from_vector(&field.ty);
+                    quote! {
+                      pub fn #arg_name(&mut self, #arg_name: #vec_inner_ty) -> &mut Self {
+                        self.#ident.push(#arg_name);
+                        self
+                      }
+                    }
+                } else {
+                    quote! {
+                      pub fn #ident(&mut self, #ident: #ty) -> &mut Self {
+                          self.#ident = Some(#ident);
+                          self
+                      }
                     }
                 }
             })
@@ -134,13 +197,16 @@ impl BuilderFactory {
             .iter()
             .map(|original_field| {
                 let field_name = original_field.ident.clone().unwrap();
-                match extract_type_from_option(&original_field.ty) {
-                    Some(_) => {
+                match is_option(&original_field.ty)
+                    || (is_vector(&original_field.ty)
+                        && original_field.attrs.iter().any(Self::is_attribute_builder))
+                {
+                    true => {
                         quote! {
                             let #field_name = self.#field_name.clone();
                         }
                     }
-                    None => {
+                    false => {
                         quote! {
                             let #field_name = self.#field_name.clone().map_or_else(|| {
                                 Err(format!("{} is not set", stringify!(#field_name)))

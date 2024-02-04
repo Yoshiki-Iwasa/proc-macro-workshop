@@ -28,6 +28,7 @@ impl OriginalMethodsFactory {
         let methods = vec![builder_method];
 
         self.impl_methods(methods)
+        // quote! {}
     }
 
     fn builder_method(&self) -> TokenStream {
