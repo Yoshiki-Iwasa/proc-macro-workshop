@@ -1,8 +1,8 @@
 use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
-    parse2, parse_macro_input, parse_quote, Data, DeriveInput, Error, Expr, Field, GenericParam,
-    Generics,
+    parse2, parse_macro_input, parse_quote, Data, DeriveInput, Error, Expr, Field, GenericArgument,
+    GenericParam, Generics, PathArguments, WherePredicate,
 };
 
 #[proc_macro_derive(CustomDebug, attributes(debug))]
@@ -11,6 +11,51 @@ pub fn derive(input: TokenStream) -> TokenStream {
     expand(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
+}
+
+fn add_where_clause(mut generics: Generics, fields: &[Field]) -> Generics {
+    for field in fields {
+        let syn::Type::Path(type_path) = &field.ty else {
+            continue;
+        };
+
+        let PathArguments::AngleBracketed(angle_generics_args) =
+            &type_path.path.segments.last().unwrap().arguments
+        else {
+            continue;
+        };
+
+        for generics_arg in &angle_generics_args.args {
+            let GenericArgument::Type(ty) = generics_arg else {
+                continue;
+            };
+
+            let syn::Type::Path(inner_type_path) = ty else {
+                continue;
+            };
+
+            let inner_first_segment = inner_type_path.path.segments.first().unwrap();
+
+            let first_ident = &inner_first_segment.ident;
+
+            let type_params = generics.type_params_mut();
+
+            let mut where_predicates: Vec<WherePredicate> = vec![];
+            for type_param in type_params {
+                let inner_type_used =
+                    &type_param.ident == first_ident && inner_type_path.path.segments.len() > 1;
+
+                if inner_type_used {
+                    where_predicates.push(parse_quote!(#inner_type_path: std::fmt::Debug));
+                    continue;
+                }
+            }
+            let where_clause = generics.make_where_clause();
+            where_clause.predicates.extend(where_predicates);
+        }
+    }
+
+    generics
 }
 
 fn add_trait_bounds(mut generics: Generics, fields: &[Field]) -> Generics {
@@ -23,6 +68,29 @@ fn add_trait_bounds(mut generics: Generics, fields: &[Field]) -> Generics {
                 } else {
                     false
                 }
+            }) {
+                continue;
+            }
+            if fields.iter().any(|field| {
+                let syn::Type::Path(type_path) = &field.ty else {
+                    return false;
+                };
+                let PathArguments::AngleBracketed(args) =
+                    &type_path.path.segments.last().unwrap().arguments
+                else {
+                    return false;
+                };
+                args.args.iter().any(|arg| {
+                    let GenericArgument::Type(ty) = arg else {
+                        return false;
+                    };
+
+                    let syn::Type::Path(inner_type_path) = ty else {
+                        return false;
+                    };
+                    inner_type_path.path.segments.len() > 1
+                        && &inner_type_path.path.segments.first().unwrap().ident == type_ident
+                })
             }) {
                 continue;
             }
@@ -62,6 +130,7 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
 
     //
     let generics = add_trait_bounds(input.generics.clone(), &fields);
+    let generics = add_where_clause(generics, &fields);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     Ok(quote! {
