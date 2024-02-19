@@ -1,8 +1,9 @@
 use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
-    parse2, parse_macro_input, parse_quote, Data, DeriveInput, Error, Expr, Field, GenericArgument,
-    GenericParam, Generics, PathArguments, WherePredicate,
+    parse::Parse, parse2, parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Error,
+    Expr, Field, GenericArgument, GenericParam, Generics, Lit, MacroDelimiter, MetaNameValue,
+    PathArguments, WherePredicate,
 };
 
 #[proc_macro_derive(CustomDebug, attributes(debug))]
@@ -13,7 +14,54 @@ pub fn derive(input: TokenStream) -> TokenStream {
         .into()
 }
 
-fn add_where_clause(mut generics: Generics, fields: &[Field]) -> Generics {
+fn add_where_clause_from_struct_attr(
+    mut generics: Generics,
+    attrs: &[Attribute],
+) -> Option<Generics> {
+    let where_predicates = attrs
+        .iter()
+        .filter_map(|attr| attr.meta.require_list().ok())
+        .filter_map(|meta_list| {
+            if matches!(meta_list.delimiter, MacroDelimiter::Paren(_))
+                && meta_list.path.is_ident("debug")
+            {
+                let token_stream = &meta_list.tokens;
+                let name_value: Option<MetaNameValue> = parse2(token_stream.clone()).ok();
+                name_value
+            } else {
+                None
+            }
+        })
+        .filter_map(|name_value| {
+            if name_value.path.is_ident("bound") {
+                Some(name_value.value)
+            } else {
+                None
+            }
+        })
+        .filter_map(|expr| {
+            let Expr::Lit(lit_expr) = expr else {
+                return None;
+            };
+            let Lit::Str(lit_str) = &lit_expr.lit else {
+                return None;
+            };
+
+            lit_str.parse_with(WherePredicate::parse).ok()
+        })
+        .collect::<Vec<_>>();
+    if where_predicates.is_empty() {
+        None
+    } else {
+        let where_clause = generics.make_where_clause();
+        where_predicates.iter().for_each(|where_predicate| {
+            where_clause.predicates.push(parse_quote!(#where_predicate));
+        });
+        Some(generics)
+    }
+}
+
+fn add_where_clause_from_fields(mut generics: Generics, fields: &[Field]) -> Generics {
     for field in fields {
         let syn::Type::Path(type_path) = &field.ty else {
             continue;
@@ -128,12 +176,19 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let struct_name_ident = input.ident.clone();
     let struct_name_str = input.ident.clone().to_string();
 
-    //
-    let generics = add_trait_bounds(input.generics.clone(), &fields);
-    let generics = add_where_clause(generics, &fields);
+    let generics = if let Some(generics) =
+        add_where_clause_from_struct_attr(input.generics.clone(), &input.attrs)
+    {
+        generics
+    } else {
+        add_trait_bounds(input.generics.clone(), &fields)
+    };
+    let generics = add_where_clause_from_fields(generics, &fields);
+
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     Ok(quote! {
+
         impl #impl_generics std::fmt::Debug for #struct_name_ident #ty_generics #where_clause {
             fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 fmt.debug_struct(#struct_name_str)
