@@ -12,8 +12,15 @@ proc-macro = true
 name = "tests"
 path = "tests/progress.rs"
 
+[[test]]
+name = "ext"
+path = "tests/ext.rs"
+
+
 [dev-dependencies]
 trybuild = { version = "1.0.49", features = ["diff"] }
 
 [dependencies]
-# TODO
+syn = {version = "2.0", features = [ "full"]}
+quote = "1.0"
+proc-macro2 = "1.0"
