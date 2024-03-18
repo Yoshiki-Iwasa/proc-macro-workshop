@@ -11,9 +11,18 @@ pub fn sorted(
 ) -> proc_macro::TokenStream {
     let _ = args;
     let input = parse_macro_input!(input as Item);
-    check_sorted(input)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
+    match check_sorted(input.clone()) {
+        Ok(input_stream) => input_stream,
+        Err(e) => {
+            let error_stream = e.into_compile_error();
+            quote! {
+                #error_stream
+
+                #input
+            }
+        }
+    }
+    .into()
 }
 
 fn check_sorted(input: Item) -> syn::Result<proc_macro2::TokenStream> {
@@ -26,8 +35,6 @@ fn check_sorted(input: Item) -> syn::Result<proc_macro2::TokenStream> {
 
     let variants = &item_enum.variants;
 
-    // 辞書順のどこにいれるべきかを判定しないといけない
-    //
     if let Some(Err(e)) = variants.iter().map(syn::Result::Ok).reduce(|prev, now| {
         let prev = prev?;
         let now = now?;
